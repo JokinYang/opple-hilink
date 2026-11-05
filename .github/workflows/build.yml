@@ -264,13 +264,20 @@ jobs:
       - name: 汇总产物
         run: |
           set -euo pipefail
+          root="$PWD"
           mkdir -p out
-          find artifacts -type f \
-            \( -name '*.whl' -o -name '*.tar.gz' \
-               -o -name '*.so' -o -name '*.dll' -o -name '*.dylib' \
-               -o -name '*.a' -o -name '*.lib' \
-               -o -name 'opple' -o -name 'opple.exe' \) \
-            -exec cp {} out/ \;
+          shopt -s nullglob
+          # 各平台产物同名（opple / libopple_hilink.so / .a），不能平铺到一个目录，
+          # 否则会互相覆盖：二进制/Android 统一按 artifact 名打成 zip
+          for d in artifacts/bin-* artifacts/android-*; do
+            [ -d "$d" ] || continue
+            name="$(basename "$d")"
+            ( cd "$d" && zip -qr "$root/out/$name.zip" * )
+          done
+          # wheel 与 sdist 本身已是唯一命名，直接平铺
+          find artifacts -type f \( -name '*.whl' -o -name '*.tar.gz' \) -exec cp {} out/ \;
+          # 附校验和，便于下载后核对
+          ( cd out && sha256sum * > SHA256SUMS.txt )
           ls -l out
 
       - uses: softprops/action-gh-release@v2
