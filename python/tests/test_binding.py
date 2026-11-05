@@ -142,10 +142,15 @@ class BindingTest(unittest.TestCase):
                 [sys.executable, os.path.abspath(__file__), "--probe"],
                 capture_output=True,
                 text=True,
+                # 子进程输出含中文 SSID；不显式指定时 Windows 会按 cp1252 解码而报错
+                encoding="utf-8",
+                errors="replace",
                 env=env,
             )
             self.assertEqual(r.returncode, 0, r.stderr)
-            outs[be] = json.loads(r.stdout.strip().splitlines()[-1])
+            lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
+            self.assertTrue(lines, f"{be} 子进程无输出，stderr={r.stderr!r}")
+            outs[be] = json.loads(lines[-1])
 
         self.assertEqual(outs["native"]["backend"], "native")
         self.assertEqual(outs["ctypes"]["backend"], "ctypes")
