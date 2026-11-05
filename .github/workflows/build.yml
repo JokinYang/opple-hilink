@@ -57,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$RUNNER_OS" in
-            Windows) LIB="$PWD/target/release/opple_hilink.dll" ;;
+            Windows) LIB="$(cygpath -w "$PWD/target/release/opple_hilink.dll")" ;;
             macOS)   LIB="$PWD/target/release/libopple_hilink.dylib" ;;
             *)       LIB="$PWD/target/release/libopple_hilink.so" ;;
           esac
@@ -144,7 +144,8 @@ jobs:
         with:
           key: android-${{ matrix.abi }}
 
-      - uses: taiki-e/install-action@cargo-ndk
+      - name: 安装 cargo-ndk
+        run: cargo install cargo-ndk --quiet
 
       - name: 定位 NDK
         run: |
