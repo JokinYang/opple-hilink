@@ -91,9 +91,12 @@ jobs:
 
       - name: 安装 aarch64 交叉链接器
         if: matrix.target == 'aarch64-unknown-linux-gnu'
+        timeout-minutes: 10        # apt 偶发卡死时不要拖住整个 job
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          set -euo pipefail
+          APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo apt-get update "${APT_OPTS[@]}"
+          sudo apt-get install -y --no-install-recommends "${APT_OPTS[@]}" gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: cargo build
