@@ -1,11 +1,10 @@
-//! `opple_hilink_native`：opple-hilink 的 Python 扩展模块。
+//! `opple_hilink._native`：opple-hilink 的 Python 扩展模块。
 //!
-//! 只暴露一个转发入口 `opple_call(op, args_json)`，直接复用 C ABI 层
-//! （`opple_hilink::ffi`），保证「native」与「ctypes」两条后端行为完全一致——
-//! 两者最终走的都是同一份 Rust 实现，只是跨语言边界的方式不同。
+//! 走 maturin 的混合布局（`python-source = "."`），与纯 Python 包 `opple_hilink`
+//! 一起打进同一个 wheel，导入时优先于 ctypes 后端。
 //!
-//! 返回值同样是 `{"ok":true,"data":…}` / `{"ok":false,"error":{…}}` 的 JSON 字符串，
-//! 由 Python 侧的 `opple_hilink.call()` 统一解包与抛错。
+//! 内部只做转发，复用 C ABI 层（`opple_hilink::ffi`），因此「native」与「ctypes」
+//! 两条后端最终执行的完全是同一份 Rust 代码。
 
 use std::ffi::{CStr, CString};
 
@@ -59,7 +58,7 @@ fn crc8(key_id: &str) -> u8 {
 }
 
 #[pymodule]
-fn opple_hilink_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(opple_call, m)?)?;
     m.add_function(wrap_pyfunction!(opple_version, m)?)?;
     m.add_function(wrap_pyfunction!(crc8, m)?)?;

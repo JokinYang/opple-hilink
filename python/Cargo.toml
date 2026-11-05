@@ -1,0 +1,24 @@
+[package]
+name = "opple-hilink-python"
+version = "0.1.0"
+edition = "2021"
+description = "opple-hilink 的 Python 扩展（PyO3，abi3）"
+publish = false
+
+[lib]
+# maturin 用 module-name = "opple_hilink._native"，初始化符号为 PyInit__native
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+# abi3-py38：一个 wheel 覆盖 CPython 3.8+，CI 不必按 Python 版本铺矩阵
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
+opple-hilink = { path = ".." }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# 独立 workspace：避免 pyo3 依赖混入主 crate 的 Cargo.lock
+[workspace]

@@ -15,9 +15,14 @@ import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+SRC = os.path.dirname(HERE)
 
-import opple_hilink as opple  # noqa: E402
+# 优先用已安装的包（wheel / `pip install -e`），否则退回归仓库里的源码目录
+try:
+    import opple_hilink as opple  # noqa: E402
+except ImportError:  # pragma: no cover - 取决于运行方式
+    sys.path.insert(0, SRC)
+    import opple_hilink as opple  # noqa: E402
 
 AUTH = "00112233445566778899aabbccddeeff"
 SN1 = "0102030405060708"
@@ -152,7 +157,7 @@ class BindingTest(unittest.TestCase):
 def _native_available():
     import importlib
 
-    for name in ("opple_hilink.opple_hilink_native", "opple_hilink_native"):
+    for name in ("opple_hilink._native", "opple_hilink_native"):
         try:
             importlib.import_module(name)
             return True

@@ -2,7 +2,7 @@
 
 两套后端，自动选择：
 
-1. **native** —— 编译出的 PyO3 扩展 `opple_hilink_native`（`.pyd` / `.so`），最快；
+1. **native** —— 编译出的 PyO3 扩展 `opple_hilink._native`（wheel 自带），最快；
 2. **ctypes** —— 直接加载 Rust 产出的 `opple_hilink.dll` / `libopple_hilink.so`，无需编译 Python 扩展。
 
 两者共用同一份 C ABI 约定（JSON 进、JSON 出），所以行为一致：
@@ -161,19 +161,23 @@ def _pick_backend() -> None:
     if forced == "ctypes":
         _backend = "ctypes"
         return
-    if forced in ("native", "pyo3"):
-        _backend = "native"
-        return
 
-    # 优先包内子模块（pip 安装后由 maturin / 手动拷贝放在包目录里），
-    # 其次顶层模块（开发时把 .pyd 放在 python/ 下）
-    for name in (f"{__name__}.opple_hilink_native", "opple_hilink_native"):
+    # 优先包内子模块（wheel / maturin develop 产出的 `opple_hilink._native`），
+    # 其次顶层模块（手工把 .pyd/.so 放在 python/ 下的开发场景）
+    for name in (f"{__name__}._native", "opple_hilink_native"):
         try:
             _native = importlib.import_module(name)
             _backend = "native"
             return
         except Exception:
             continue
+
+    if forced in ("native", "pyo3"):
+        raise OppleError(
+            "BackendUnavailable",
+            "OPPLE_HILINK_BACKEND=native，但找不到扩展模块 `opple_hilink._native`；"
+            "请用 wheel 安装（pip install dist/*.whl）或 `maturin develop`。",
+        )
     _backend = "ctypes"
 
 

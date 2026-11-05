@@ -107,17 +107,22 @@ lib.opple_free(p)
 
 ## 作为 Python 库使用
 
-`python/` 是一个可直接 `import` 的包，两套后端自动择一，行为完全一致：
+`python/` 是 maturin 混合项目：一个 wheel 里同时包含纯 Python 包与 PyO3 扩展，装完即用。
 
 | 后端 | 来源 | 说明 |
 |---|---|---|
-| `native` | `python/opple_hilink/opple_hilink_native.pyd` | PyO3 编译的扩展模块，无 ctypes 开销 |
-| `ctypes` | `opple_hilink.dll` / `libopple_hilink.so` | 直接加载 Rust 动态库，**无需编译任何 Python 扩展** |
+| `native` | wheel 内的 `opple_hilink/_native`（PyO3，`abi3` ≥3.8） | 默认，无 ctypes 开销 |
+| `ctypes` | 外部 `opple_hilink.dll` / `libopple_hilink.so` | 无需编译扩展时可回退；用 `OPPLE_HILINK_LIB` 指路径 |
 
 ```bash
-pip install -e python
+pip install -e python                  # 开发安装（maturin 自动编译扩展）
+pip install ./python                   # 构建 wheel 并安装
+cd python && maturin build --release -o dist   # 只产 wheel：dist/opple_hilink-0.1.0-cp38-abi3-*.whl
+```
+
+```bash
 python -c "import opple_hilink as o; print(o.backend(), o.crc8('134DC'))"
-# → native 165   （找不到扩展时自动回退 ctypes）
+# → native 165   （没有扩展时自动回退 ctypes）
 ```
 
 ```python
@@ -145,15 +150,22 @@ opple.prov_parse(frame, "Hi- OPPLE-READINGLAMP-0TEST1")
 参数较宽松：`auth_code` / `key` / `frame` 都接受 `bytes` 或 hex 字符串（`key` 也接受 base64）。
 失败统一抛 `OppleError`，`.kind` ∈ `Io | Timeout | Coap | Crypto | Json | Frame | Arg | Device`。
 
-想用原生扩展：
+## CI：各平台产物
 
-```bash
-cd python/native && cargo build --release
-# Windows: target/release/opple_hilink_native.dll → ../opple_hilink/opple_hilink_native.pyd
-# Linux/macOS: maturin develop  （或在 pyproject.toml 里 maturin build）
-```
+`.github/workflows/build.yml` 在 push / PR / 打 tag 时构建，产物以 artifact 形式保留；
+推 `v*` tag 时会自动创建 Release 并附上全部文件。
 
-不编译也能用——`import opple_hilink` 检测不到扩展就自动走 ctypes。
+| Job | 产物 |
+|---|---|
+| `test` | Ubuntu / Windows / macOS 上跑 `cargo test`（25 项）与 Python 测试（12 项，含双后端对比） |
+| `binaries` | Linux x86_64 / aarch64、Windows x86_64、macOS x86_64 / arm64：`opple`、`libopple_hilink.so/.dylib/.a`、`opple_hilink.dll/.lib` |
+| `android` | `jniLibs/{arm64-v8a,armeabi-v7a,x86_64,x86}/libopple_hilink.so` |
+| `wheel-linux` | `cp38-abi3` manylinux2014（x86_64、aarch64） |
+| `wheel-desktop` | `cp38-abi3` Windows x86_64、macOS universal2 |
+| `sdist` | `opple_hilink-0.1.0.tar.gz` |
+
+> wheel 用 `abi3-py38`，一个文件覆盖 CPython 3.8+，不必按 Python 版本铺矩阵。
+
 
 ## 快速开始
 
@@ -351,7 +363,7 @@ src/ffi.rs         C ABI 导出层（JSON 进出的统一入口，cdylib/staticl
 src/error.rs       统一错误类型
 src/main.rs        CLI
 tests/             配网帧回归测试（合成夹具）+ C ABI 边界测试
-python/            Python 绑定包（ctypes 后端 + 可选 PyO3 扩展）
-python/native/     PyO3 扩展 crate（独立 workspace）
+python/            maturin 混合项目：Python 包 + PyO3 扩展（同一 wheel）
+.github/workflows/ CI：各平台二进制库、Android .so、Python wheel、sdist、Release
 docs/              协议分析报告（逆向依据与真机实测记录）
 ```

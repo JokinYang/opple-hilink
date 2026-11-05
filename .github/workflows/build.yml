@@ -1,0 +1,271 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # ---------------------------------------------------------------- 测试
+  test:
+    name: test / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            python -> target
+
+      - name: cargo test
+        run: cargo test --locked --all-targets
+
+      - name: cargo build (cdylib，供 ctypes 后端使用)
+        run: cargo build --locked --release
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 Python 包（maturin 构建扩展）
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./python
+
+      - name: Python 测试（native + ctypes 双后端对比）
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows) LIB="$PWD/target/release/opple_hilink.dll" ;;
+            macOS)   LIB="$PWD/target/release/libopple_hilink.dylib" ;;
+            *)       LIB="$PWD/target/release/libopple_hilink.so" ;;
+          esac
+          echo "ctypes 库: $LIB"
+          export OPPLE_HILINK_LIB="$LIB"
+          python -m unittest discover -s python/tests -v
+
+  # ---------------------------------------------------------------- 原生二进制库
+  binaries:
+    name: bin / ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,   artifact: linux-x86_64 }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-gnu,  artifact: linux-aarch64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,     artifact: windows-x86_64 }
+          - { os: macos-14,       target: aarch64-apple-darwin,       artifact: macos-aarch64 }
+          - { os: macos-14,       target: x86_64-apple-darwin,        artifact: macos-x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: 安装 aarch64 交叉链接器
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: cargo build
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: 收集产物
+        shell: bash
+        run: |
+          set -euo pipefail
+          T="${{ matrix.target }}"
+          OUT="${{ matrix.artifact }}"
+          mkdir -p "$OUT"
+          find "target/$T/release" -maxdepth 1 -type f \
+            \( -name 'opple' -o -name 'opple.exe' \
+               -o -name 'libopple_hilink.so' -o -name 'libopple_hilink.dylib' \
+               -o -name 'libopple_hilink.a' \
+               -o -name 'opple_hilink.dll' -o -name 'opple_hilink.lib' \) \
+            -exec cp {} "$OUT/" \;
+          test -n "$(ls -A "$OUT")"
+          ls -l "$OUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- Android (.so)
+  android:
+    name: android / ${{ matrix.abi }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { abi: arm64-v8a,   target: aarch64-linux-android }
+          - { abi: armeabi-v7a, target: armv7-linux-androideabi }
+          - { abi: x86_64,      target: x86_64-linux-android }
+          - { abi: x86,         target: i686-linux-android }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ matrix.abi }}
+
+      - uses: taiki-e/install-action@cargo-ndk
+
+      - name: 定位 NDK
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_NDK_HOME:-}" ] && [ -d "$ANDROID_NDK_HOME/toolchains" ]; then
+            echo "沿用预置 NDK: $ANDROID_NDK_HOME"
+          else
+            base="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}/ndk"
+            latest="$(ls -1 "$base" | sort -V | tail -n1)"
+            echo "ANDROID_NDK_HOME=$base/$latest" >> "$GITHUB_ENV"
+            echo "选用 NDK: $base/$latest"
+          fi
+
+      - name: cargo ndk build
+        run: cargo ndk -t ${{ matrix.abi }} -o jniLibs build --locked --release --lib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.abi }}
+          path: jniLibs/${{ matrix.abi }}/*.so
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- Python wheel（Linux）
+  wheel-linux:
+    name: wheel / linux-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  target: x86_64-unknown-linux-gnu }
+          - { arch: aarch64, target: aarch64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: python
+          target: ${{ matrix.target }}
+          manylinux: "2014"
+          args: --locked --release --out dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-${{ matrix.arch }}
+          path: python/dist/*.whl
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- Python wheel（macOS / Windows）
+  wheel-desktop:
+    name: wheel / ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: windows-x86_64, target: x86_64-pc-windows-msvc }
+          - { os: macos-14,       platform: macos-universal2, target: universal2-apple-darwin }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.target == 'universal2-apple-darwin'
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: python
+          target: ${{ matrix.target }}
+          args: --locked --release --out dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform }}
+          path: python/dist/*.whl
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- sdist
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: python
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: python/dist/*.tar.gz
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- 打 tag 时发 Release
+  release:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, binaries, android, wheel-linux, wheel-desktop, sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 汇总产物
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find artifacts -type f \
+            \( -name '*.whl' -o -name '*.tar.gz' \
+               -o -name '*.so' -o -name '*.dll' -o -name '*.dylib' \
+               -o -name '*.a' -o -name '*.lib' \
+               -o -name 'opple' -o -name 'opple.exe' \) \
+            -exec cp {} out/ \;
+          ls -l out
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true

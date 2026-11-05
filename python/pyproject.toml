@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "opple-hilink"
@@ -15,5 +15,8 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 
-[tool.setuptools]
-packages = ["opple_hilink"]
+[tool.maturin]
+# 混合布局：wheel 里同时有 opple_hilink/（纯 Python）与 opple_hilink/_native（本扩展）
+module-name = "opple_hilink._native"
+python-source = "."
+strip = true
