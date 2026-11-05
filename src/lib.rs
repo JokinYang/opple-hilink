@@ -13,6 +13,7 @@ pub mod control;
 pub mod crypto;
 pub mod discovery;
 pub mod error;
+pub mod ffi;
 pub mod ota;
 pub mod provision;
 pub mod session;

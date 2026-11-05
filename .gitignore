@@ -1,3 +1,14 @@
 /target
 /jniLibs
 /.opple.json
+
+# Python：构建产物与缓存不入库（-e 安装时由本机生成）
+python/native/target/
+python/opple_hilink/*.pyd
+python/opple_hilink/*.so
+python/opple_hilink/*.dylib
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/

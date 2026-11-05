@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "opple-hilink-native"
+version = "0.1.0"
+description = "opple-hilink 的 Python 扩展模块（PyO3）：本地控制 / 配网帧 / 固件升级"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+
+[tool.maturin]
+module-name = "opple_hilink_native"
+strip = true

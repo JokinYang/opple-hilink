@@ -12,6 +12,9 @@ path = "src/main.rs"
 [lib]
 name = "opple_hilink"
 path = "src/lib.rs"
+# rlib：Rust 侧与 CLI 复用；cdylib：.so/.dll/.dylib（JNI、ctypes、Unity）；
+# staticlib：.a/.lib（C/C++ 静态链接）
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 aes = "0.8"

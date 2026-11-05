@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opple-hilink"
+version = "0.1.0"
+description = "OPPLE 读写台灯（HiLink prodId 134D）协议 Python 绑定：本地控制 / 白盒配网帧 / 固件升级"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+keywords = ["opple", "hilink", "coap", "smart-home", "lamp"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Home Automation",
+]
+
+[tool.setuptools]
+packages = ["opple_hilink"]

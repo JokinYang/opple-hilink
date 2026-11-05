@@ -30,14 +30,130 @@
 
 ```bash
 cargo build --release
-cargo test            # 19 个测试（14 单测 + 5 集成）；配网帧用合成夹具回归，真机帧回归见 docs/
+cargo test            # 25 个测试（14 单测 + 6 C ABI + 5 配网帧集成）
 ```
+
+产物（`[lib] crate-type = ["cdylib", "staticlib", "rlib"]`）：
+
+| 产物 | 用途 |
+|---|---|
+| `opple` / `opple.exe` | CLI |
+| `opple_hilink.dll` / `libopple_hilink.so` / `libopple_hilink.dylib` | 动态库：JNI、`ctypes`、Unity、C/C++ |
+| `opple_hilink.lib` / `libopple_hilink.a` | 静态库 |
+| `libopple_hilink.rlib` | 供其他 Rust crate 引用 |
 
 交叉编译到手机（已装 cargo-ndk）：
 
 ```bash
 cargo ndk -t arm64-v8a -o ./jniLibs build --release
+# → jniLibs/arm64-v8a/libopple_hilink.so
 ```
+
+## 作为库使用（C ABI）
+
+导出层在 `src/ffi.rs`，只有一个「JSON 进、JSON 出」的入口，避免为每种语言写一套结构体映射：
+
+```c
+#include <stdio.h>
+
+extern char *opple_version(void);
+extern char *opple_call(const char *op, const char *args_json);
+extern void  opple_free(char *p);
+
+int main(void) {
+    char *r = opple_call("derive",
+        "{\"auth_code\":\"00112233445566778899aabbccddeeff\","
+        "\"sn1_hex\":\"0102030405060708\",\"sn2_hex\":\"1112131415161718\"}");
+    puts(r);          // {"ok":true,"data":{"psk":"…","hmac_key":"…"}}
+    opple_free(r);
+    return 0;
+}
+```
+
+约定：返回值永远是非 NULL 的堆分配 UTF-8 字符串，**必须** `opple_free`；失败时也给合法 JSON：
+
+```json
+{"ok":true,"data":{…}}
+{"ok":false,"error":{"kind":"Timeout","message":"设备响应 超时（设备无响应）"}}
+```
+
+`error.kind` ∈ `Io | Timeout | Coap | Crypto | Json | Frame | Arg | Device`，便于调用方分类处理。
+入参 NULL、非法 UTF-8、非法 JSON、内部 panic 都会转成错误体，**不会跨 FFI 边界崩溃**。
+
+支持的操作：
+
+| `op` | 说明 | 主要参数 |
+|---|---|---|
+| `version` / `profile` | 版本探针 / 服务字典 | — |
+| `derive` / `crc8` | 纯计算：PSK+HMACKey 派生 / keyId 校验字节 | `auth_code` `sn1_hex` `sn2_hex`；`key_id` |
+| `session` | 建本地会话 | `host` `account_id` `auth_code` |
+| `control` | 建会话并下发一条服务 | `service` `data`/`data_json` + 设备四要素 |
+| `prov_parse` / `prov_decrypt` | 配网帧解析 / 解密 | `frame_hex` `ap_ssid` `key_hex`\|`key_b64` |
+| `prov_build` / `prov_send` | 组帧 / 发送并等 `HI-ACK` | `ssid` `password` `register_json` … |
+| `discover` | `/.well-known/core?st=cloudSetup` | `host` `port` |
+| `ota_mqtt` / `ota_status` | 云升级命令 / 升级状态解析 | `access_token` `user_id` `device_id` `action` |
+
+Python 侧同样直连，无需编译绑定：
+
+```python
+import ctypes, json
+lib = ctypes.CDLL("./libopple_hilink.so")          # Windows 用 "opple_hilink.dll"
+lib.opple_call.restype = ctypes.c_void_p
+lib.opple_free.argtypes = [ctypes.c_void_p]
+p = lib.opple_call(b"crc8", b'{"key_id":"TEST1"}')
+print(json.loads(ctypes.string_at(p).decode()))
+lib.opple_free(p)
+```
+
+## 作为 Python 库使用
+
+`python/` 是一个可直接 `import` 的包，两套后端自动择一，行为完全一致：
+
+| 后端 | 来源 | 说明 |
+|---|---|---|
+| `native` | `python/opple_hilink/opple_hilink_native.pyd` | PyO3 编译的扩展模块，无 ctypes 开销 |
+| `ctypes` | `opple_hilink.dll` / `libopple_hilink.so` | 直接加载 Rust 动态库，**无需编译任何 Python 扩展** |
+
+```bash
+pip install -e python
+python -c "import opple_hilink as o; print(o.backend(), o.crc8('134DC'))"
+# → native 165   （找不到扩展时自动回退 ctypes）
+```
+
+```python
+import json
+import opple_hilink as opple
+
+# 设备控制
+lamp = opple.Client(host="192.168.1.100", device_id="<DEVICE_ID>",
+                    account_id="<ACCOUNT_ID>", user_id="<USER_ID>",
+                    auth_code="<AUTH_CODE>")
+lamp.on(); lamp.brightness(120); lamp.cct(4000); lamp.mode(2); lamp.side(True)
+
+# 纯计算：不需要设备、不触网
+opple.derive(auth_code, sn1, sn2)          # {"psk": …, "hmac_key": …}
+opple.crc8("134DC")                        # 165
+
+# 配网帧
+frame = opple.prov_build(ap_ssid="Hi- OPPLE-READINGLAMP-0TEST1",
+                         ssid="home-2.4G", password="…",
+                         register_json=json.dumps({"code": "…"}),
+                         key=bytes(16))
+opple.prov_parse(frame, "Hi- OPPLE-READINGLAMP-0TEST1")
+```
+
+参数较宽松：`auth_code` / `key` / `frame` 都接受 `bytes` 或 hex 字符串（`key` 也接受 base64）。
+失败统一抛 `OppleError`，`.kind` ∈ `Io | Timeout | Coap | Crypto | Json | Frame | Arg | Device`。
+
+想用原生扩展：
+
+```bash
+cd python/native && cargo build --release
+# Windows: target/release/opple_hilink_native.dll → ../opple_hilink/opple_hilink_native.pyd
+# Linux/macOS: maturin develop  （或在 pyproject.toml 里 maturin build）
+```
+
+不编译也能用——`import opple_hilink` 检测不到扩展就自动走 ctypes。
 
 ## 快速开始
 
@@ -216,6 +332,10 @@ opple on              # 直接可用，不读任何环境变量
 | `provision_frame::decrypts_roundtrip` | AES-CBC(IV=0) 解出密码与注册包 JSON |
 | `provision_frame::rebuild_is_byte_identical` | **按解析结果重建，与原帧逐字节相同** |
 | `provision_frame::rejects_bad_checksums` | 两段校验字节分别失效 |
+| `ffi::version_probe` | `opple_version` 探针、C 字符串往返与释放 |
+| `ffi::derive_matches_rust_api` | 同一组输入下 C ABI 与 Rust API 结果一致 |
+| `ffi::provision_roundtrip_via_ffi` | 经 C ABI 组帧→解析→解密闭环 |
+| `ffi::error_paths_do_not_panic` | 未知操作 / 非法 JSON / NULL 指针均返回错误体 |
 
 ## 目录
 
@@ -227,8 +347,11 @@ src/control.rs     控制帧构造/解析/发送
 src/provision.rs   白盒配网帧解析/组帧/解密
 src/ota.rs         MQTT 升级命令 + 本地 update 服务
 src/discovery.rs   /.well-known/core?st=cloudSetup
+src/ffi.rs         C ABI 导出层（JSON 进出的统一入口，cdylib/staticlib 用）
 src/error.rs       统一错误类型
 src/main.rs        CLI
-tests/             配网帧回归测试（合成夹具，不含真机数据）
+tests/             配网帧回归测试（合成夹具）+ C ABI 边界测试
+python/            Python 绑定包（ctypes 后端 + 可选 PyO3 扩展）
+python/native/     PyO3 扩展 crate（独立 workspace）
 docs/              协议分析报告（逆向依据与真机实测记录）
 ```

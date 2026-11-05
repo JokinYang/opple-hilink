@@ -1,0 +1,17 @@
+[package]
+name = "opple-hilink-python"
+version = "0.1.0"
+edition = "2021"
+description = "opple-hilink 的 Python 扩展模块（PyO3）"
+publish = false
+
+[lib]
+name = "opple_hilink_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+opple-hilink = { path = "../.." }
+
+# 独立 workspace：避免把 pyo3 的依赖混进主 crate 的 Cargo.lock
+[workspace]
