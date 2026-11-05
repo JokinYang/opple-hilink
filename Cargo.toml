@@ -1,0 +1,27 @@
+[package]
+name = "opple-hilink"
+version = "0.1.0"
+edition = "2021"
+description = "OPPLE / HiLink 台灯交互协议 Rust 实现：本地控制（CoAP+AES-CBC+HMAC）、白盒配网帧、固件升级（MQTT/本地 update）"
+license = "MIT"
+
+[[bin]]
+name = "opple"
+path = "src/main.rs"
+
+[lib]
+name = "opple_hilink"
+path = "src/lib.rs"
+
+[dependencies]
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+hex = "0.4"
+serde_json = "1"
+
+[profile.release]
+opt-level = 2
